@@ -57,6 +57,19 @@ resource "null_resource" "docker_build_and_push" {
   depends_on = [aws_ecr_repository.api_repository]
 }
 
+data "aws_ecr_image" "my_image" {
+  repository_name = aws_ecr_repository.api_repository.name
+  image_tag       = "latest"
+  depends_on      = [null_resource.docker_build_and_push]
+}
+
+resource "null_resource" "trigger_apprunner_deployment" {
+  triggers = {
+    image_digest = "${data.aws_ecr_image.my_image.image_digest}"
+  }
+  depends_on = [null_resource.docker_build_and_push]
+}
+
 resource "aws_iam_role" "app_runner_role" {
   name = "app-runner-role"
   assume_role_policy = jsonencode({
@@ -68,7 +81,14 @@ resource "aws_iam_role" "app_runner_role" {
           Service = "build.apprunner.amazonaws.com"
         },
         Action = "sts:AssumeRole"
-      }
+      },
+      {
+        Effect: "Allow",
+        Principal: {
+          Service: "tasks.apprunner.amazonaws.com"
+        },
+        Action: "sts:AssumeRole"
+    }
     ]
   })
 }
@@ -108,6 +128,13 @@ resource "aws_iam_role_policy" "app_runner_policy" {
           "sqs:*"
         ],
         Resource = "*"
+      },
+      {
+        Effect = "Allow",
+        Action = [
+          "rds:*"
+        ],
+        Resource = "*"
       }
     ]
   })
@@ -132,6 +159,9 @@ resource "aws_apprunner_service" "my_service" {
     instance_role_arn = aws_iam_role.app_runner_role.arn
     cpu = "1024"
     memory = "2048"
+  }
+  lifecycle {
+    create_before_destroy = true
   }
   depends_on = [ null_resource.docker_build_and_push, aws_iam_role.app_runner_role , aws_iam_role_policy.app_runner_policy] 
 }

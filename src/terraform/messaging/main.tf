@@ -4,7 +4,7 @@ resource "aws_sns_topic" "my_topic" {
 }
 
 # Create SQS Queue
-resource "aws_sqs_queue" "my_queue" {
+resource "aws_sqs_queue" "elements_queue" {
   name = "elements-queue"
 }
 
@@ -12,15 +12,15 @@ resource "aws_sqs_queue" "my_queue" {
 resource "aws_sns_topic_subscription" "my_subscription" {
   topic_arn = aws_sns_topic.my_topic.arn
   protocol  = "sqs"
-  endpoint  = aws_sqs_queue.my_queue.arn
+  endpoint  = aws_sqs_queue.elements_queue.arn
 
   # Allow SNS to send messages to SQS
-  depends_on = [aws_sqs_queue_policy.my_queue_policy]
+  depends_on = [aws_sqs_queue_policy.elements_queue_policy]
 }
 
 # Create SQS Queue Policy to allow SNS to send messages
-resource "aws_sqs_queue_policy" "my_queue_policy" {
-  queue_url = aws_sqs_queue.my_queue.id
+resource "aws_sqs_queue_policy" "elements_queue_policy" {
+  queue_url = aws_sqs_queue.elements_queue.id
   policy    = jsonencode({
     Version = "2012-10-17",
     Statement = [
@@ -28,7 +28,7 @@ resource "aws_sqs_queue_policy" "my_queue_policy" {
         Effect = "Allow",
         Principal = "*",
         Action = "sqs:SendMessage",
-        Resource = aws_sqs_queue.my_queue.arn,
+        Resource = aws_sqs_queue.elements_queue.arn,
         Condition = {
           ArnEquals = {
             "aws:SourceArn" = aws_sns_topic.my_topic.arn
@@ -37,4 +37,94 @@ resource "aws_sqs_queue_policy" "my_queue_policy" {
       }
     ]
   })
+}
+
+
+# Create IAM Role for Lambda
+resource "aws_iam_role" "lambda_role" {
+  name = "lambda-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect = "Allow",
+        Principal = {
+          Service = "lambda.amazonaws.com"
+        },
+        Action = "sts:AssumeRole"
+      }
+    ]
+  })
+}
+
+# Attach policy to the role
+resource "aws_iam_role_policy" "lambda_policy" {
+  name = "lambda-policy"
+  role = aws_iam_role.lambda_role.id
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect = "Allow",
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ],
+        Resource = "arn:aws:logs:*:*:*"
+      },
+      {
+        Effect = "Allow",
+        Action = [
+          "sqs:ReceiveMessage",
+          "sqs:DeleteMessage",
+          "sqs:GetQueueAttributes"
+        ],
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+# Create ECR Repository
+resource "aws_ecr_repository" "lambda_repository" {
+  name = "lambda-repo"
+  force_delete = true
+}
+
+# Build and push Docker image to ECR
+resource "null_resource" "docker_build_and_push" {
+  provisioner "local-exec" {
+    command = <<EOT
+      aws ecr get-login-password --region eu-central-1 | docker login --username AWS --password-stdin ${aws_ecr_repository.lambda_repository.repository_url}
+      docker build -t lambda-repo /Users/pedro.nieto/Documents/CPT/AWS_Streaming/src/terraform/messaging/docker
+      docker tag lambda-repo:latest ${aws_ecr_repository.lambda_repository.repository_url}:latest
+      docker push ${aws_ecr_repository.lambda_repository.repository_url}:latest
+    EOT
+  }
+  depends_on = [aws_ecr_repository.lambda_repository]
+}
+
+# Create Lambda Function
+resource "aws_lambda_function" "sqs_lambda" {
+  function_name = "sqs-lambda"
+  role          = aws_iam_role.lambda_role.arn
+  package_type  = "Image"
+  image_uri     = "${aws_ecr_repository.lambda_repository.repository_url}:latest"
+  timeout       = 30
+
+  environment {
+    variables = {
+      SQS_QUEUE_URL = aws_sqs_queue.elements_queue.url
+    }
+  }
+  depends_on = [null_resource.docker_build_and_push]
+}
+
+# Create SQS Event Source Mapping
+resource "aws_lambda_event_source_mapping" "sqs_event" {
+  event_source_arn = aws_sqs_queue.elements_queue.arn
+  function_name    = aws_lambda_function.sqs_lambda.arn
+  batch_size       = 10
+  enabled          = true
 }

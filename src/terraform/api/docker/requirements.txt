@@ -2,3 +2,4 @@ Flask==3.0.0
 Werkzeug
 flasgger
 boto3
+pymysql
