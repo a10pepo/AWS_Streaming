@@ -1,6 +1,25 @@
 # Create a VPC
 resource "aws_vpc" "main" {
   cidr_block = "10.0.0.0/16"
+  enable_dns_hostnames = true
+  enable_dns_support = true
+
+}
+
+resource "aws_vpc_endpoint" "sns" {
+  vpc_id = aws_vpc.main.id
+  service_name = "com.amazonaws.eu-central-1.sns"
+  auto_accept = true
+  subnet_ids = [aws_subnet.subnet1.id, aws_subnet.subnet2.id]
+  security_group_ids = [aws_security_group.rds_sg.id] 
+  vpc_endpoint_type = "Interface"
+}
+
+# Create a VPC connector for App Runner
+resource "aws_apprunner_vpc_connector" "connector" {
+  vpc_connector_name = "dbconnector"
+  subnets            = [aws_subnet.subnet1.id, aws_subnet.subnet2.id]
+  security_groups    = [aws_security_group.rds_sg.id]
 }
 
 # Create subnets
@@ -21,8 +40,8 @@ resource "aws_security_group" "rds_sg" {
   vpc_id = aws_vpc.main.id
 
   ingress {
-    from_port   = 3306
-    to_port     = 3306
+    from_port   = 0
+    to_port     = 0
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
@@ -52,8 +71,8 @@ resource "aws_db_instance" "mysql" {
   engine               = "mysql"
   engine_version       = "8.0"
   instance_class       = "db.t3.micro"
-  username             = "root"
-  password             = "shoppwd0"  # Use a more secure password
+  username             = var.rds_root_user
+  password             = var.rds_root_pass
   db_subnet_group_name = aws_db_subnet_group.main.name
   vpc_security_group_ids = [aws_security_group.rds_sg.id]
   skip_final_snapshot  = true
@@ -64,6 +83,20 @@ resource "aws_db_instance" "mysql" {
   tags = {
     Name = "MySQL RDS Instance"
   }
+}
+
+resource "aws_secretsmanager_secret" "rds_secret" {
+  name = "rds_secret"
+  recovery_window_in_days = 0
+}
+
+resource "aws_secretsmanager_secret_version" "rds_secret_version" {
+  secret_id     = aws_secretsmanager_secret.rds_secret.id
+  secret_string = jsonencode({
+    username = aws_db_instance.mysql.username,
+    password = aws_db_instance.mysql.password
+  })
+  
 }
 
 # Output the RDS endpoint

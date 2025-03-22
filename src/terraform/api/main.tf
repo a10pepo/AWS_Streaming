@@ -152,16 +152,32 @@ resource "aws_apprunner_service" "my_service" {
       image_repository_type = "ECR"
       image_configuration {
         port = "8000"
+        runtime_environment_variables = {
+          "RDS_HOST" = var.db_host
+          "RDS_USER" = var.rds_root_user
+          "RDS_PASS" = var.rds_root_pass
+          "RDS_DB"   = var.rds_db
+        }
       }
     }
   }
   instance_configuration {
     instance_role_arn = aws_iam_role.app_runner_role.arn
     cpu = "1024"
-    memory = "2048"
+    memory = "2048"    
+  }
+  network_configuration {
+    egress_configuration {
+      egress_type = "VPC"
+      vpc_connector_arn = var.vpc_connector_arn
+    }
   }
   lifecycle {
     create_before_destroy = true
   }
   depends_on = [ null_resource.docker_build_and_push, aws_iam_role.app_runner_role , aws_iam_role_policy.app_runner_policy] 
+}
+
+resource "aws_cloudwatch_log_group" "app_runner_logs" {
+  name = "/aws/apprunner/my-app-runner-service"
 }

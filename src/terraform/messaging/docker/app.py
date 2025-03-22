@@ -1,35 +1,38 @@
 import json
 import boto3
 import logging
+import pymysql
+import os
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
+RDS_HOST = os.getenv('RDS_HOST', 'default-host')
+RDS_USER = os.getenv('RDS_USER', 'default-user')
+RDS_DB = os.getenv('RDS_DB', 'default-db')
+
 def lambda_handler(event, context):
-    # Initialize SQS client
-    sqs_client = boto3.client('sqs')
+    logger.info(f"Received event: {json.dumps(event)}")
+    logger.info(f"RDS_HOST: {RDS_HOST}")
+    logger.info(f"RDS_USER: {RDS_USER}")
+    logger.info(f"RDS_DB: {RDS_DB}")
+
+    connection = pymysql.connect(
+        host=RDS_HOST.split(':')[0],
+        user=RDS_USER,
+        password=os.getenv('RDS_PASS'),
+        db=RDS_DB,
+        port=3306,
+        cursorclass=pymysql.cursors.DictCursor
+    )
     
-    # Get the queue URL
-    queue_url = sqs_client.get_queue_url(QueueName='elements-queue')['QueueUrl']
-    
-    # Process each message in the event
-    for record in event['Records']:
-        # Get the message body
-        message_body = record['body']
-        
-        # Log the message body
-        logger.info(f"Received message: {message_body}")
-        
-        # Process the message (add your custom logic here)
-        process_message(message_body)
-        
-        # Delete the message from the queue
-        receipt_handle = record['receiptHandle']
-        sqs_client.delete_message(
-            QueueUrl=queue_url,
-            ReceiptHandle=receipt_handle
-        )
-        logger.info(f"Deleted message: {receipt_handle}")
+    try:
+        with connection.cursor() as cursor:
+            # Insert some sample items
+            cursor.execute("INSERT INTO items (name, price, quantity, description) VALUES ('PEDRO', 0.5, 100, 'Fresh red apples')")
+            connection.commit()
+    finally:
+        connection.close()
 
 def process_message(message_body):
     # Add your custom message processing logic here

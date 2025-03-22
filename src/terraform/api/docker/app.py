@@ -13,12 +13,20 @@ swagger = Swagger(app)
 logging.basicConfig(level=logging.DEBUG)
 
 # RDS MySQL connection details
-RDS_HOST = "terraform-20250302143739892300000002.cuhzuwyoildk.eu-central-1.rds.amazonaws.com"
-RDS_USER = "root"
-RDS_DB = "shopbdb"
+RDS_HOST = os.getenv('RDS_HOST', 'default-host')
+RDS_USER = os.getenv('RDS_USER', 'default-user')
+RDS_DB = os.getenv('RDS_DB', 'default-db')
 REGION = "eu-central-1"
 
 def get_db_connection():
+    print(f"RDS_HOST: {RDS_HOST}")
+    print(f"AWS_EXECUTION_ENV: {os.getenv('AWS_EXECUTION_ENV')}")
+    print(f"AWS_REGION: {os.getenv('AWS_REGION')}")
+    print(f"RDS_USER: {RDS_USER}")
+    print(f"RDS_DB: {RDS_DB}")
+    print(f"REGION: {REGION}")
+
+
     # Check if running in AWS environment
     if not os.getenv('AWS_EXECUTION_ENV'):
         # Assume role
@@ -28,6 +36,7 @@ def get_db_connection():
             RoleSessionName="AssumeRoleSession1"
         )
         credentials = assumed_role_object['Credentials']
+        print(f"Assumed role {credentials['AccessKeyId']}")
     else:
         # Use local credentials
         session = boto3.Session()
@@ -37,21 +46,24 @@ def get_db_connection():
             'SecretAccessKey': credentials.secret_key,
             'SessionToken': credentials.token
         }        
+    # # Print current sts get_caller_identity
+    # sts_client = boto3.client('sts', region_name=REGION, aws_access_key_id=credentials['AccessKeyId'], aws_secret_access_key=credentials['SecretAccessKey'], aws_session_token=credentials['SessionToken'])
+    # print(sts_client.get_caller_identity())
 
-    # Generate an IAM authentication token
-    rds_client = boto3.client('rds', region_name=REGION, aws_access_key_id=credentials['AccessKeyId'], aws_secret_access_key=credentials['SecretAccessKey'], aws_session_token=credentials['SessionToken'])
-    token = rds_client.generate_db_auth_token(
-        DBHostname=RDS_HOST,
-        Port=3306,
-        DBUsername=RDS_USER,
-        Region=REGION
-    )
+    # # Generate an IAM authentication token
+    # rds_client = boto3.client('rds', region_name=REGION, aws_access_key_id=credentials['AccessKeyId'], aws_secret_access_key=credentials['SecretAccessKey'], aws_session_token=credentials['SessionToken'])
+    # token = rds_client.generate_db_auth_token(
+    #     DBHostname=RDS_HOST.split(':')[0],
+    #     Port=3306,
+    #     DBUsername=RDS_USER,
+    #     Region=REGION
+    # )
 
     # Connect to the RDS instance using the IAM authentication token
     connection = pymysql.connect(
-        host=RDS_HOST,
+        host=RDS_HOST.split(':')[0],
         user=RDS_USER,
-        password=token,
+        password=os.getenv('RDS_PASS'),
         db=RDS_DB,
         port=3306,
         cursorclass=pymysql.cursors.DictCursor
@@ -137,6 +149,7 @@ def new():
 
 @app.route('/addproduct', methods=['POST'])
 def add_item():
+    logging.info("Adding new product to the database...")
     new_item = {
         "id": len(items) + 1,
         "name": request.form['name'],
@@ -155,11 +168,14 @@ def add_item():
         Message=f"New product added: {new_item['name']}, Price: {new_item['price']}, Quantity: {new_item['quantity']}, Description: {new_item['description']}",
         Subject='New Product Added'
     )
+    logging.info(f"Response: {response}")
 
-    return redirect(url_for('index')) 
+    return "Product added successfully"
 
 @app.route('/buyproduct', methods=['POST'])
 def buy_product():
+    logging.info("Buying product...")
+    logging.info(f"Product: {request.form['product']}, Quantity: {request.form['quantity']}")
     product = request.form['product']
     quantity = int(request.form['quantity'])
 
@@ -172,8 +188,9 @@ def buy_product():
         Message=f"Buy: Id:{product}, Quantity: {quantity}",
         Subject='New Product Bought'
     )
+    logging.info(f"Response: {response}")
 
-    return redirect(url_for('index')) 
+    return "Product bought successfully"
 
 @app.context_processor
 def inject_random_number():
