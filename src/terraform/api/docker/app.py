@@ -5,6 +5,7 @@ import boto3
 import pymysql
 import random
 import os
+import time
 
 app = Flask(__name__)
 swagger = Swagger(app)
@@ -26,48 +27,55 @@ def get_db_connection():
     print(f"RDS_DB: {RDS_DB}")
     print(f"REGION: {REGION}")
 
+    connected = False
+    while not connected:
+        # Check if running in AWS environment
+        if not os.getenv('AWS_EXECUTION_ENV'):
+            # Assume role
+            sts_client = boto3.client('sts')
+            assumed_role_object = sts_client.assume_role(
+                RoleArn="arn:aws:iam::575240114042:role/app-runner-role",
+                RoleSessionName="AssumeRoleSession1"
+            )
+            credentials = assumed_role_object['Credentials']
+            print(f"Assumed role {credentials['AccessKeyId']}")
+        else:
+            # Use local credentials
+            session = boto3.Session()
+            credentials = session.get_credentials().get_frozen_credentials()
+            credentials = {
+                'AccessKeyId': credentials.access_key,
+                'SecretAccessKey': credentials.secret_key,
+                'SessionToken': credentials.token
+            }        
+        # # Print current sts get_caller_identity
+        # sts_client = boto3.client('sts', region_name=REGION, aws_access_key_id=credentials['AccessKeyId'], aws_secret_access_key=credentials['SecretAccessKey'], aws_session_token=credentials['SessionToken'])
+        # print(sts_client.get_caller_identity())
 
-    # Check if running in AWS environment
-    if not os.getenv('AWS_EXECUTION_ENV'):
-        # Assume role
-        sts_client = boto3.client('sts')
-        assumed_role_object = sts_client.assume_role(
-            RoleArn="arn:aws:iam::575240114042:role/app-runner-role",
-            RoleSessionName="AssumeRoleSession1"
+        # # Generate an IAM authentication token
+        # rds_client = boto3.client('rds', region_name=REGION, aws_access_key_id=credentials['AccessKeyId'], aws_secret_access_key=credentials['SecretAccessKey'], aws_session_token=credentials['SessionToken'])
+        # token = rds_client.generate_db_auth_token(
+        #     DBHostname=RDS_HOST.split(':')[0],
+        #     Port=3306,
+        #     DBUsername=RDS_USER,
+        #     Region=REGION
+        # )
+
+        # Connect to the RDS instance using the IAM authentication token
+        connection = pymysql.connect(
+            host=RDS_HOST.split(':')[0],
+            user=RDS_USER,
+            password=os.getenv('RDS_PASS'),
+            db=RDS_DB,
+            port=3306,
+            cursorclass=pymysql.cursors.DictCursor
         )
-        credentials = assumed_role_object['Credentials']
-        print(f"Assumed role {credentials['AccessKeyId']}")
-    else:
-        # Use local credentials
-        session = boto3.Session()
-        credentials = session.get_credentials().get_frozen_credentials()
-        credentials = {
-            'AccessKeyId': credentials.access_key,
-            'SecretAccessKey': credentials.secret_key,
-            'SessionToken': credentials.token
-        }        
-    # # Print current sts get_caller_identity
-    # sts_client = boto3.client('sts', region_name=REGION, aws_access_key_id=credentials['AccessKeyId'], aws_secret_access_key=credentials['SecretAccessKey'], aws_session_token=credentials['SessionToken'])
-    # print(sts_client.get_caller_identity())
+        if connection.open:
+            connected = True
+        else:
+            logging.error("Failed to connect to the database. Retrying...")
+            time.sleep(10)
 
-    # # Generate an IAM authentication token
-    # rds_client = boto3.client('rds', region_name=REGION, aws_access_key_id=credentials['AccessKeyId'], aws_secret_access_key=credentials['SecretAccessKey'], aws_session_token=credentials['SessionToken'])
-    # token = rds_client.generate_db_auth_token(
-    #     DBHostname=RDS_HOST.split(':')[0],
-    #     Port=3306,
-    #     DBUsername=RDS_USER,
-    #     Region=REGION
-    # )
-
-    # Connect to the RDS instance using the IAM authentication token
-    connection = pymysql.connect(
-        host=RDS_HOST.split(':')[0],
-        user=RDS_USER,
-        password=os.getenv('RDS_PASS'),
-        db=RDS_DB,
-        port=3306,
-        cursorclass=pymysql.cursors.DictCursor
-    )
     return connection
 
 
