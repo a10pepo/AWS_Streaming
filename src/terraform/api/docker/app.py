@@ -73,6 +73,10 @@ def get_db_connection():
         if connection.open:
             connected = True
         else:
+            retries += 1
+            if retries >= max_retries:
+                logging.error("Failed to connect to the database after multiple attempts.")
+                raise Exception("Database connection failed after maximum retries")
             logging.error("Failed to connect to the database. Retrying...")
             time.sleep(10)
 
